@@ -379,14 +379,3 @@ npx wrangler d1 execute majdata-scores --remote --file=./schema.sql
 - [Cloudflare Workers](https://developers.cloudflare.com/workers/)
 ```
 
-已寫成單獨檔案：
-
-**[/home/workdir/artifacts/README.md](file:///home/workdir/artifacts/README.md)**
-
-MajdataPlay 相關重點已補上：
-
-- `Url` 填 `https://你的網域/api`
-- `Username` / `Password` 必填，內容可隨便打
-
-你可以直接把這個 `README.md` 丟進 repo 根目錄覆蓋使用。
-🟨render_file_cite_start_docs_end_file_cite_end_citation_id
