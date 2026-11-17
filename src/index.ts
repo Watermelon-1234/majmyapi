@@ -231,19 +231,41 @@ async function getList(env: Env): Promise<ChartItem[]> {
   return [];
 }
 
-async function proxyAsset(id: string, file: string): Promise<Response> {
+async function proxyAsset(request: Request, id: string, file: string): Promise<Response> {
+  const cache = caches.default;
+  const cacheKey = new Request(request.url, request);
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+
   const upstream = await fetch(`${BASE}/s/${id}/${file}`, {
     headers: { "User-Agent": "MajdataWmcProxy/1.0" },
     redirect: "follow",
+    cf: {
+      cacheEverything: true,
+      cacheTtl: 86400 * 7, // 7 天 Edge 快取
+    },
   });
+
   if (!upstream.ok) {
-    return new Response("Not Found", { status: 404, headers: corsHeaders() });
+    const notFound = new Response("Not Found", {
+      status: 404,
+      headers: {
+        ...corsHeaders(),
+        "Cache-Control": "public, max-age=3600", // 404 快取 1 小時，避免反覆穿透打上游
+      },
+    });
+    await cache.put(cacheKey, notFound.clone());
+    return notFound;
   }
+
   const headers = new Headers(corsHeaders());
   const ct = upstream.headers.get("Content-Type");
   if (ct) headers.set("Content-Type", ct);
-  headers.set("Cache-Control", "public, max-age=86400");
-  return new Response(upstream.body, { status: 200, headers });
+  headers.set("Cache-Control", "public, max-age=604800, immutable"); // 快取 7 天
+
+  const response = new Response(upstream.body, { status: 200, headers });
+  await cache.put(cacheKey, response.clone());
+  return response;
 }
 
 async function handleScorePost(request: Request, env: Env): Promise<Response> {
@@ -354,20 +376,55 @@ export default {
           });
         }
 
-        if (asset === "track") return proxyAsset(id, "track.mp3");
+        if (asset === "track") return proxyAsset(request, id, "track.mp3");
 
         if (asset === "image") {
-          const png = await fetch(`${BASE}/s/${id}/bg.png`, {
+          const cache = caches.default;
+          const cacheKey = new Request(request.url, request);
+          const cached = await cache.match(cacheKey);
+          if (cached) return cached;
+
+          // 嘗試抓 bg.png
+          let upstream = await fetch(`${BASE}/s/${id}/bg.png`, {
             headers: { "User-Agent": "MajdataWmcProxy/1.0" },
             redirect: "follow",
+            cf: {
+              cacheEverything: true,
+              cacheTtl: 86400 * 7,
+            },
           });
-          if (png.ok) {
-            const headers = new Headers(corsHeaders());
-            headers.set("Content-Type", png.headers.get("Content-Type") || "image/png");
-            headers.set("Cache-Control", "public, max-age=86400");
-            return new Response(png.body, { status: 200, headers });
+
+          // 如果沒有 bg.png，才抓 bg.jpg
+          if (!upstream.ok) {
+            upstream = await fetch(`${BASE}/s/${id}/bg.jpg`, {
+              headers: { "User-Agent": "MajdataWmcProxy/1.0" },
+              redirect: "follow",
+              cf: {
+                cacheEverything: true,
+                cacheTtl: 86400 * 7,
+              },
+            });
           }
-          return proxyAsset(id, "bg.jpg");
+
+          if (!upstream.ok) {
+            const notFound = new Response("Not Found", {
+              status: 404,
+              headers: {
+                ...corsHeaders(),
+                "Cache-Control": "public, max-age=3600", // 404 也快取 1 小時，避免反覆穿透打上游
+              },
+            });
+            await cache.put(cacheKey, notFound.clone());
+            return notFound;
+          }
+
+          const headers = new Headers(corsHeaders());
+          headers.set("Content-Type", upstream.headers.get("Content-Type") || "image/jpeg");
+          headers.set("Cache-Control", "public, max-age=604800, immutable"); // 快取 7 天
+
+          const response = new Response(upstream.body, { status: 200, headers });
+          await cache.put(cacheKey, response.clone());
+          return response;
         }
 
         if (asset === "video") {
